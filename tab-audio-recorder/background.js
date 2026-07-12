@@ -1,20 +1,5 @@
-// Service Worker: アイコンクリックで録音の開始/停止をトグルする（Google公式の最小構成）。
-// 状態の真実は「offscreen が録音中か」を offscreen に問い合わせて得る（storage 不要）。
-
-// アイコン右クリックに「設定を開く」を追加（クリック録音を奪わずに設定へ到達できるように）
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: "open-options",
-      title: "設定を開く",
-      contexts: ["action"],
-    });
-  });
-});
-
-chrome.contextMenus.onClicked.addListener((info) => {
-  if (info.menuItemId === "open-options") chrome.runtime.openOptionsPage();
-});
+// Service Worker: ポップアップからの指示で録音を開始/停止する。
+// 録音の中身（getMediaStreamId → offscreen → 録音）は動作実績のある構成のまま。
 
 async function hasOffscreen() {
   const contexts = await chrome.runtime.getContexts({
@@ -35,7 +20,6 @@ async function closeOffscreen() {
   if (await hasOffscreen()) await chrome.offscreen.closeDocument();
 }
 
-// offscreen が録音中かを問い合わせる
 async function isRecording() {
   if (!(await hasOffscreen())) return false;
   try {
@@ -49,65 +33,74 @@ async function isRecording() {
   }
 }
 
-function setBadge(text, color) {
+function setBadge(text) {
   chrome.action.setBadgeText({ text });
-  if (color) chrome.action.setBadgeBackgroundColor({ color });
+  chrome.action.setBadgeBackgroundColor({ color: "#d33" });
 }
 
-chrome.action.onClicked.addListener(async (tab) => {
-  try {
-    if (await isRecording()) {
-      // 停止して保存
-      await chrome.runtime.sendMessage({ target: "offscreen", type: "stop" });
-      chrome.action.setTitle({ title: "保存中…" });
-      return;
-    }
-
-    // 開始
-    if (tab.url && /^(chrome|edge|about|chrome-extension):/.test(tab.url)) {
-      throw new Error("このページ（chrome:// など）はキャプチャできません");
-    }
-    await closeOffscreen(); // 残っていれば解放
-    const streamId = await chrome.tabCapture.getMediaStreamId({
-      targetTabId: tab.id,
-    });
-    const settings = await chrome.storage.local.get({
-      monitor: true,
-      minutes: 0,
-      format: "mp3",
-      bitrate: 320,
-    });
-    await createOffscreen();
-    await chrome.runtime.sendMessage({
-      target: "offscreen",
-      type: "start",
-      streamId,
-      monitor: settings.monitor,
-      minutes: settings.minutes,
-      format: settings.format,
-      bitrate: settings.bitrate,
-    });
-    setBadge("REC", "#d33");
-    chrome.action.setTitle({ title: "録音中… クリックで停止・保存" });
-  } catch (e) {
-    setBadge("ERR", "#d33");
-    chrome.action.setTitle({ title: "エラー: " + (e.message || e) });
-    console.error("[TabAudioRecorder]", e);
+async function startRecording() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) throw new Error("アクティブなタブが見つかりません");
+  if (tab.url && /^(chrome|edge|about|chrome-extension):/.test(tab.url)) {
+    throw new Error("このページ（chrome:// など）はキャプチャできません");
   }
-});
+  await closeOffscreen(); // 残っていれば解放
+  const streamId = await chrome.tabCapture.getMediaStreamId({
+    targetTabId: tab.id,
+  });
+  const settings = await chrome.storage.local.get({
+    monitor: true,
+    minutes: 0,
+    format: "mp3",
+    bitrate: 320,
+  });
+  await createOffscreen();
+  await chrome.runtime.sendMessage({
+    target: "offscreen",
+    type: "start",
+    streamId,
+    monitor: settings.monitor,
+    minutes: settings.minutes,
+    format: settings.format,
+    bitrate: settings.bitrate,
+  });
+  setBadge("REC");
+}
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "download") {
-    chrome.downloads.download({
-      url: msg.url,
-      filename: msg.filename,
-      saveAs: true,
-    });
-  } else if (msg.type === "saved") {
-    setBadge("", "#d33");
-    chrome.action.setTitle({ title: "保存しました / クリックで録音開始" });
-  } else if (msg.type === "rec-error") {
-    setBadge("ERR", "#d33");
-    chrome.action.setTitle({ title: "エラー: " + msg.error });
+async function stopRecording() {
+  if (await hasOffscreen()) {
+    await chrome.runtime.sendMessage({ target: "offscreen", type: "stop" });
   }
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  (async () => {
+    try {
+      if (msg.type === "get-status") {
+        sendResponse({ ok: true, recording: await isRecording() });
+      } else if (msg.type === "start") {
+        await startRecording();
+        sendResponse({ ok: true });
+      } else if (msg.type === "stop") {
+        await stopRecording();
+        sendResponse({ ok: true });
+      } else if (msg.type === "download") {
+        chrome.downloads.download({
+          url: msg.url,
+          filename: msg.filename,
+          saveAs: true,
+        });
+        sendResponse({ ok: true });
+      } else if (msg.type === "saved") {
+        setBadge("");
+        sendResponse({ ok: true });
+      } else if (msg.type === "rec-error") {
+        setBadge("");
+        sendResponse({ ok: true });
+      }
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message || String(e) });
+    }
+  })();
+  return true;
 });

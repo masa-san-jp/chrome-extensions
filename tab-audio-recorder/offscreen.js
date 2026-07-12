@@ -71,6 +71,7 @@ async function start(streamId, monitor, minutes, fmt, kbps) {
 
     recorder.start(1000);
     recording = true;
+    chrome.runtime.sendMessage({ type: "started" });
 
     // N分後に自動停止（停止すれば onStop で保存される）
     if (minutes && minutes > 0) {

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        width: 250px;
+        font-family: -apple-system, "Hiragino Kaku Gothic ProN", sans-serif;
+        margin: 0;
+        padding: 14px;
+        color: #222;
+      }
+      h1 { font-size: 14px; margin: 0 0 10px; }
+      #toggle {
+        width: 100%;
+        padding: 11px;
+        font-size: 14px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        color: #fff;
+        background: #d33;
+      }
+      #toggle.recording { background: #444; }
+      #toggle:disabled { opacity: 0.5; cursor: default; }
+      #status { font-size: 12px; color: #666; margin: 8px 0 4px; min-height: 16px; }
+      .rec { color: #d33; font-weight: bold; }
+      .err { color: #d33; }
+      hr { border: none; border-top: 1px solid #eee; margin: 12px 0; }
+      .set { font-size: 12px; margin: 9px 0; }
+      .set label { display: flex; align-items: center; gap: 6px; }
+      .hint { font-size: 11px; color: #999; margin: 2px 0 0 22px; }
+      select, input[type="number"] { font-size: 12px; padding: 2px 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>タブ音声レコーダー</h1>
+    <button id="toggle">● 録音開始</button>
+    <div id="status"></div>
+
+    <hr />
+    <div class="set">
+      <label><input type="checkbox" id="monitor" /> 録音中もタブの音を再生する</label>
+      <div class="hint">オフで無音（ミュート）のまま録音</div>
+    </div>
+    <div class="set">
+      <label>
+        <input type="number" id="minutes" min="0" step="1" style="width:56px" />
+        分後に自動停止（0で無制限）
+      </label>
+    </div>
+    <div class="set">
+      <label>
+        出力形式
+        <select id="format">
+          <option value="mp3">MP3</option>
+          <option value="webm">WebM(高速)</option>
+        </select>
+      </label>
+    </div>
+    <div class="set" id="bitrateRow">
+      <label>
+        ビットレート
+        <select id="bitrate">
+          <option value="128">128</option>
+          <option value="192">192</option>
+          <option value="256">256</option>
+          <option value="320">320</option>
+        </select>
+        kbps
+      </label>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
