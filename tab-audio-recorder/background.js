@@ -56,11 +56,21 @@ chrome.action.onClicked.addListener(async (tab) => {
     const streamId = await chrome.tabCapture.getMediaStreamId({
       targetTabId: tab.id,
     });
+    const settings = await chrome.storage.local.get({
+      monitor: true,
+      minutes: 0,
+      format: "mp3",
+      bitrate: 320,
+    });
     await createOffscreen();
     await chrome.runtime.sendMessage({
       target: "offscreen",
       type: "start",
       streamId,
+      monitor: settings.monitor,
+      minutes: settings.minutes,
+      format: settings.format,
+      bitrate: settings.bitrate,
     });
     setBadge("REC", "#d33");
     chrome.action.setTitle({ title: "録音中… クリックで停止・保存" });

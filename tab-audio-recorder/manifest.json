@@ -1,14 +1,18 @@
 {
   "manifest_version": 3,
   "name": "Tab Audio Recorder",
-  "version": "2.0.0",
-  "description": "拡張アイコンをクリックすると再生中タブの音声を録音し、もう一度クリックで停止してMP3保存します。",
-  "permissions": ["tabCapture", "offscreen", "downloads"],
+  "version": "2.1.0",
+  "description": "拡張アイコンをクリックすると再生中タブの音声を録音し、もう一度クリックで停止して保存します。ミュート録音・自動停止・形式選択に対応。",
+  "permissions": ["tabCapture", "offscreen", "downloads", "storage"],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "クリックで録音開始 / もう一度で停止・保存"
+    "default_title": "クリックで録音開始 / もう一度で停止・保存（設定は右クリック→オプション）"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   },
   "minimum_chrome_version": "116"
 }
