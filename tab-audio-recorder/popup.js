@@ -1,17 +1,18 @@
 const startBtn = document.getElementById("start");
 const stopBtn = document.getElementById("stop");
 const monitorEl = document.getElementById("monitor");
+const minutesEl = document.getElementById("minutes");
 const statusEl = document.getElementById("status");
 
 function setUI(recording) {
   startBtn.disabled = recording;
   stopBtn.disabled = !recording;
   monitorEl.disabled = recording;
+  minutesEl.disabled = recording;
   if (recording) statusEl.innerHTML = '<span class="rec">● 録音中…</span>';
   else if (!statusEl.textContent) statusEl.textContent = "待機中";
 }
 
-// 実体(offscreen)と突き合わせた本当の状態を取得。残った recording=true はここでリセットされる。
 async function refresh() {
   try {
     const res = await chrome.runtime.sendMessage({ type: "popup-sync" });
@@ -21,40 +22,18 @@ async function refresh() {
   }
 }
 
-// 録音状態が変わったら（自動保存や別ウィンドウ操作でも）UIを追従
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.recording) {
-    setUI(!!changes.recording.newValue);
-  }
+  if (area === "local" && changes.recording) setUI(!!changes.recording.newValue);
 });
 
 startBtn.addEventListener("click", async () => {
   statusEl.textContent = "開始しています…";
+  const minutes = Math.max(0, parseFloat(minutesEl.value) || 0);
   try {
-    const [tab] = await chrome.tabs.query({
-      active: true,
-      currentWindow: true,
-    });
-    if (!tab) throw new Error("アクティブなタブが見つかりません");
-    if (tab.url && /^(chrome|edge|about|chrome-extension):/.test(tab.url)) {
-      throw new Error("このページ（chrome:// など）はキャプチャできません");
-    }
-
-    // クリック直後（ユーザー操作が有効なうちに）最優先で取得する。
-    // 前回のキャプチャが残っていて "active stream" になった時だけ、解放して取り直す。
-    let streamId;
-    try {
-      streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-    } catch (e) {
-      await chrome.runtime.sendMessage({ type: "popup-cleanup" });
-      streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-    }
-
     const res = await chrome.runtime.sendMessage({
       type: "popup-start",
-      streamId,
       monitor: monitorEl.checked,
-      bitrate: 320,
+      minutes,
     });
     if (res && res.ok) {
       statusEl.textContent = "";
@@ -73,7 +52,6 @@ stopBtn.addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "popup-stop" });
 });
 
-// offscreen からの結果表示
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "rec-result") {
     const silent = msg.peak < 0.001;

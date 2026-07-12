@@ -1,6 +1,5 @@
 // Service Worker: 録音の開始/停止を統括し、offscreen ドキュメントへ指示を出す。
-// 録音状態の真実は chrome.storage.local.recording（offscreen が更新）に置く。
-// Service Worker は随時終了するため、状態変数は信頼しない。
+// getMediaStreamId は background で呼ぶ（この構成が実績あり）。状態は chrome.storage.local.recording。
 
 async function hasOffscreen() {
   const contexts = await chrome.runtime.getContexts({
@@ -18,7 +17,6 @@ async function ensureOffscreen() {
   });
 }
 
-// offscreen ドキュメントを閉じて、掴んだままのタブキャプチャストリームを解放する
 async function closeOffscreen() {
   if (await hasOffscreen()) {
     await chrome.offscreen.closeDocument();
@@ -26,15 +24,28 @@ async function closeOffscreen() {
   await chrome.storage.local.set({ recording: false });
 }
 
-async function startRecording(streamId, monitor, bitrate) {
-  if (!streamId) throw new Error("ストリーム ID がありません");
+async function startRecording(monitor, minutes) {
+  // 前回のキャプチャが残っていると "active stream" になるので、先に解放
+  await closeOffscreen();
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) throw new Error("アクティブなタブが見つかりません");
+  if (tab.url && /^(chrome|edge|about|chrome-extension):/.test(tab.url)) {
+    throw new Error("このページ（chrome:// など）はキャプチャできません");
+  }
+
+  const streamId = await chrome.tabCapture.getMediaStreamId({
+    targetTabId: tab.id,
+  });
+
   await ensureOffscreen();
   await chrome.runtime.sendMessage({
     target: "offscreen",
     type: "start-recording",
     streamId,
     monitor,
-    bitrate,
+    minutes,
+    bitrate: 320,
   });
 }
 
@@ -45,9 +56,17 @@ async function stopRecording() {
       type: "stop-recording",
     });
   } else {
-    // offscreen が無い＝録音は既に消えている。状態だけ戻す。
     await chrome.storage.local.set({ recording: false });
   }
+}
+
+// offscreen が本当に生きているかで状態を突き合わせ、残った recording=true をリセット
+async function syncState() {
+  const offscreen = await hasOffscreen();
+  const { recording } = await chrome.storage.local.get("recording");
+  const real = offscreen && !!recording;
+  if (!!recording !== real) await chrome.storage.local.set({ recording: real });
+  return real;
 }
 
 function setBadge(rec) {
@@ -55,36 +74,17 @@ function setBadge(rec) {
   chrome.action.setBadgeBackgroundColor({ color: "#d33" });
 }
 
-// 録音状態の変化に応じてバッジを更新
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.recording) {
-    setBadge(!!changes.recording.newValue);
-  }
+  if (area === "local" && changes.recording) setBadge(!!changes.recording.newValue);
 });
-
-// 実体（offscreen）と保存状態を突き合わせて本当の録音状態を返す。
-// offscreen が無ければ録音していないので、残っていた recording=true をリセットする。
-async function syncState() {
-  const offscreen = await hasOffscreen();
-  const { recording } = await chrome.storage.local.get("recording");
-  const real = offscreen && !!recording;
-  if (!!recording !== real) {
-    await chrome.storage.local.set({ recording: real });
-  }
-  return real;
-}
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       if (msg.type === "popup-sync") {
         sendResponse({ ok: true, recording: await syncState() });
-      } else if (msg.type === "popup-cleanup") {
-        // 開始前に既存のキャプチャ/offscreen を解放（"active stream" エラー対策）
-        await closeOffscreen();
-        sendResponse({ ok: true });
       } else if (msg.type === "popup-start") {
-        await startRecording(msg.streamId, !!msg.monitor, msg.bitrate || 320);
+        await startRecording(!!msg.monitor, msg.minutes || 0);
         sendResponse({ ok: true });
       } else if (msg.type === "popup-stop") {
         await stopRecording();
@@ -101,5 +101,5 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: e.message });
     }
   })();
-  return true; // 非同期レスポンスのため
+  return true;
 });

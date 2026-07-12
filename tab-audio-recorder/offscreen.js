@@ -20,11 +20,12 @@ let chunks = [];
 let captureStream = null;
 let audioContext = null;
 let bitrate = 320;
+let autoStopTimer = null;
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.target !== "offscreen") return;
   if (msg.type === "start-recording") {
-    startRecording(msg.streamId, msg.monitor, msg.bitrate).catch((e) => {
+    startRecording(msg.streamId, msg.monitor, msg.bitrate, msg.minutes).catch((e) => {
       console.error("[TabAudioRecorder] 録音開始エラー:", e);
       chrome.storage.local.set({ recording: false });
       chrome.runtime.sendMessage({ type: "rec-error", error: String(e.message || e) });
@@ -34,7 +35,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
-async function startRecording(streamId, monitor, kbps) {
+async function startRecording(streamId, monitor, kbps, minutes) {
   if (recorder && recorder.state === "recording") return;
   bitrate = kbps || 320;
 
@@ -79,9 +80,21 @@ async function startRecording(streamId, monitor, kbps) {
 
   recorder.start(1000); // 1秒ごとにデータを確保
   chrome.storage.local.set({ recording: true });
+
+  // N分後に自動停止（停止すれば onStop で必ず保存される）
+  if (minutes && minutes > 0) {
+    autoStopTimer = setTimeout(() => {
+      console.log(`[TabAudioRecorder] ${minutes}分経過 → 自動停止して保存`);
+      stopRecording();
+    }, minutes * 60 * 1000);
+  }
 }
 
 function stopRecording() {
+  if (autoStopTimer) {
+    clearTimeout(autoStopTimer);
+    autoStopTimer = null;
+  }
   if (recorder && recorder.state !== "inactive") recorder.stop();
 }
 
