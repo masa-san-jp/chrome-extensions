@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Selection to CSV",
+  "version": "1.0.0",
+  "description": "スプレッドシートで選択・コピーした範囲をCSVファイルとして保存します。Googleスプレッドシート / Excel Online など、TSVでコピーされる表全般に対応。",
+  "permissions": ["clipboardRead", "downloads"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "選択範囲をCSVで保存"
+  },
+  "minimum_chrome_version": "109"
+}

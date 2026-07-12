@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        width: 260px;
+        font-family: -apple-system, "Hiragino Kaku Gothic ProN", sans-serif;
+        margin: 0;
+        padding: 14px;
+      }
+      h1 { font-size: 14px; margin: 0 0 8px; }
+      ol { margin: 0 0 12px; padding-left: 18px; font-size: 12px; color: #555; line-height: 1.6; }
+      kbd {
+        background: #eee; border: 1px solid #ccc; border-radius: 4px;
+        padding: 0 4px; font-size: 11px;
+      }
+      button {
+        width: 100%; padding: 10px; font-size: 14px; border: none;
+        border-radius: 8px; cursor: pointer; color: #fff; background: #188038;
+      }
+      button:disabled { opacity: 0.5; cursor: default; }
+      label { font-size: 12px; display: flex; align-items: center; gap: 6px; margin: 10px 0; }
+      #status { font-size: 12px; margin-top: 10px; min-height: 16px; color: #666; }
+      .ok { color: #188038; }
+      .err { color: #d33; }
+    </style>
+  </head>
+  <body>
+    <h1>選択範囲をCSVで保存</h1>
+    <ol>
+      <li>スプレッドシートで範囲を選択</li>
+      <li><kbd>⌘</kbd>+<kbd>C</kbd>（Win は <kbd>Ctrl</kbd>+<kbd>C</kbd>）でコピー</li>
+      <li>下のボタンを押す</li>
+    </ol>
+    <label>
+      <input type="checkbox" id="bom" checked />
+      Excel向けにBOMを付ける（日本語の文字化け防止）
+    </label>
+    <button id="save">クリップボードからCSV保存</button>
+    <div id="status"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

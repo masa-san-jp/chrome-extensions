@@ -7,6 +7,7 @@
 | 拡張 | 説明 |
 | --- | --- |
 | [tab-audio-recorder](./tab-audio-recorder) | 再生中のタブの動画・音声を録音して MP3 で保存する拡張。ミュート状態でも録音可能。 |
+| [selection-to-csv](./selection-to-csv) | スプレッドシートで選択・コピーした範囲を CSV で保存する拡張。Google スプレッドシート / Excel Online 等に対応。 |
 
 ## インストール（共通・開発版として読み込み）
 
