@@ -7,15 +7,22 @@ function setUI(recording) {
   startBtn.disabled = recording;
   stopBtn.disabled = !recording;
   monitorEl.disabled = recording;
-  statusEl.innerHTML = recording
-    ? '<span class="rec">● 録音中…</span>'
-    : "待機中";
+  if (recording) statusEl.innerHTML = '<span class="rec">● 録音中…</span>';
+  else if (!statusEl.textContent) statusEl.textContent = "待機中";
 }
 
+// 録音状態の真実は chrome.storage.local.recording
 async function refresh() {
-  const res = await chrome.runtime.sendMessage({ type: "popup-status" });
-  setUI(!!(res && res.recording));
+  const { recording } = await chrome.storage.local.get("recording");
+  setUI(!!recording);
 }
+
+// 録音状態が変わったら（自動保存や別ウィンドウ操作でも）UIを追従
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.recording) {
+    setUI(!!changes.recording.newValue);
+  }
+});
 
 startBtn.addEventListener("click", async () => {
   statusEl.textContent = "開始しています…";
@@ -44,6 +51,7 @@ startBtn.addEventListener("click", async () => {
       bitrate: 320,
     });
     if (res && res.ok) {
+      statusEl.textContent = "";
       setUI(true);
     } else {
       statusEl.textContent = "エラー: " + (res ? res.error : "不明");
@@ -55,21 +63,20 @@ startBtn.addEventListener("click", async () => {
 
 stopBtn.addEventListener("click", async () => {
   statusEl.textContent = "保存・変換しています…";
+  stopBtn.disabled = true;
   await chrome.runtime.sendMessage({ type: "popup-stop" });
-  setUI(false);
 });
 
-// offscreen からの録音結果（診断つき）を表示
+// offscreen からの結果表示
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type !== "rec-result") return;
-  const silent = msg.peak < 0.001;
-  statusEl.innerHTML =
-    `保存しました<br>長さ ${msg.duration.toFixed(1)}s / ` +
-    `ピーク ${msg.peak.toFixed(4)}` +
-    (msg.trackMuted ? " / track=muted" : "") +
-    (silent
-      ? '<br><span style="color:#d33">⚠ 無音でした</span>'
-      : "");
+  if (msg.type === "rec-result") {
+    const silent = msg.peak < 0.001;
+    statusEl.innerHTML =
+      `保存しました<br>長さ ${msg.duration.toFixed(1)}s / ピーク ${msg.peak.toFixed(4)}` +
+      (silent ? '<br><span class="err">⚠ 無音でした</span>' : "");
+  } else if (msg.type === "rec-error") {
+    statusEl.innerHTML = '<span class="err">保存できず: ' + msg.error + "</span>";
+  }
 });
 
 refresh();

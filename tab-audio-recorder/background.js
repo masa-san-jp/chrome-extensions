@@ -1,6 +1,6 @@
 // Service Worker: 録音の開始/停止を統括し、offscreen ドキュメントへ指示を出す。
-
-let recording = false;
+// 録音状態の真実は chrome.storage.local.recording（offscreen が更新）に置く。
+// Service Worker は随時終了するため、状態変数は信頼しない。
 
 async function hasOffscreen() {
   const contexts = await chrome.runtime.getContexts({
@@ -23,8 +23,7 @@ async function closeOffscreen() {
   if (await hasOffscreen()) {
     await chrome.offscreen.closeDocument();
   }
-  recording = false;
-  updateBadge();
+  await chrome.storage.local.set({ recording: false });
 }
 
 async function startRecording(streamId, monitor, bitrate) {
@@ -37,24 +36,31 @@ async function startRecording(streamId, monitor, bitrate) {
     monitor,
     bitrate,
   });
-
-  recording = true;
-  updateBadge();
 }
 
 async function stopRecording() {
-  await chrome.runtime.sendMessage({
-    target: "offscreen",
-    type: "stop-recording",
-  });
-  recording = false;
-  updateBadge();
+  if (await hasOffscreen()) {
+    await chrome.runtime.sendMessage({
+      target: "offscreen",
+      type: "stop-recording",
+    });
+  } else {
+    // offscreen が無い＝録音は既に消えている。状態だけ戻す。
+    await chrome.storage.local.set({ recording: false });
+  }
 }
 
-function updateBadge() {
-  chrome.action.setBadgeText({ text: recording ? "REC" : "" });
+function setBadge(rec) {
+  chrome.action.setBadgeText({ text: rec ? "REC" : "" });
   chrome.action.setBadgeBackgroundColor({ color: "#d33" });
 }
+
+// 録音状態の変化に応じてバッジを更新
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.recording) {
+    setBadge(!!changes.recording.newValue);
+  }
+});
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
@@ -69,8 +75,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "popup-stop") {
         await stopRecording();
         sendResponse({ ok: true });
-      } else if (msg.type === "popup-status") {
-        sendResponse({ ok: true, recording });
       } else if (msg.target === "background" && msg.type === "download") {
         await chrome.downloads.download({
           url: msg.url,

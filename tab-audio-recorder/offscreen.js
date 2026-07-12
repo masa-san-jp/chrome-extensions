@@ -8,10 +8,12 @@
 //
 // 無音を踏まないための2つの鉄則:
 //   (1) audio だけ(video:false)で取ると Chrome は無音トラックを返す → audio+video で取得する。
-//   (2) MediaRecorder は「生トラック」ではなく Web Audio の出力(recDest.stream)を録る
-//       → 生トラックを Web Audio に繋ぐと MediaRecorder 側が無音になる競合を避けられる。
+//   (2) MediaRecorder は「生トラック」ではなく Web Audio の出力(recDest.stream)を録る。
 //
-// MP3 変換のためのデコードは録音停止後に別 AudioContext で行う。
+// 途中で止まっても必ずファイルを残す工夫:
+//   - recorder.start(1000): 1秒ごとにチャンク確保
+//   - キャプチャのトラックが ended になったら自動で停止＆保存
+//   - 録音状態は chrome.storage.local に保存（Service Worker が死んでも UI が正しく復元）
 
 let recorder = null;
 let chunks = [];
@@ -22,9 +24,11 @@ let bitrate = 320;
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.target !== "offscreen") return;
   if (msg.type === "start-recording") {
-    startRecording(msg.streamId, msg.monitor, msg.bitrate).catch((e) =>
-      console.error("[TabAudioRecorder] 録音開始エラー:", e)
-    );
+    startRecording(msg.streamId, msg.monitor, msg.bitrate).catch((e) => {
+      console.error("[TabAudioRecorder] 録音開始エラー:", e);
+      chrome.storage.local.set({ recording: false });
+      chrome.runtime.sendMessage({ type: "rec-error", error: String(e.message || e) });
+    });
   } else if (msg.type === "stop-recording") {
     stopRecording();
   }
@@ -34,7 +38,6 @@ async function startRecording(streamId, monitor, kbps) {
   if (recorder && recorder.state === "recording") return;
   bitrate = kbps || 320;
 
-  // (1) audio+video の両方を要求（audio 単独だと無音トラックになる）
   captureStream = await navigator.mediaDevices.getUserMedia({
     audio: {
       mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId },
@@ -49,18 +52,13 @@ async function startRecording(streamId, monitor, kbps) {
   audioContext = new AudioContext();
   await audioContext.resume();
   const source = audioContext.createMediaStreamSource(audioStream);
-
-  // 録音経路（常にフル音量・独立したシンク）
   const recDest = audioContext.createMediaStreamDestination();
   source.connect(recDest);
-
-  // モニター経路（聞くかどうかを gain で切替。0 でも destination へ繋ぎ、音声を確実にレンダリングさせる）
   const gain = audioContext.createGain();
   gain.gain.value = monitor ? 1 : 0;
   source.connect(gain);
   gain.connect(audioContext.destination);
 
-  // (2) 生トラックではなく Web Audio の出力を録る
   chunks = [];
   const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
     ? "audio/webm;codecs=opus"
@@ -70,7 +68,17 @@ async function startRecording(streamId, monitor, kbps) {
     if (e.data && e.data.size > 0) chunks.push(e.data);
   };
   recorder.onstop = onStop;
-  recorder.start();
+
+  // タブのキャプチャが途切れたら（タブを閉じた等）自動で停止＆保存
+  captureStream.getTracks().forEach((t) => {
+    t.onended = () => {
+      console.log("[TabAudioRecorder] トラック終了を検知 → 自動保存");
+      stopRecording();
+    };
+  });
+
+  recorder.start(1000); // 1秒ごとにデータを確保
+  chrome.storage.local.set({ recording: true });
 }
 
 function stopRecording() {
@@ -80,6 +88,11 @@ function stopRecording() {
 async function onStop() {
   try {
     const webmBlob = new Blob(chunks, { type: "audio/webm" });
+    if (webmBlob.size === 0) {
+      console.error("[TabAudioRecorder] 録音データが空です");
+      chrome.runtime.sendMessage({ type: "rec-error", error: "録音データが空でした" });
+      return;
+    }
     const { blob, peak, duration } = await webmToMp3(webmBlob, bitrate);
     const url = URL.createObjectURL(blob);
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -92,6 +105,7 @@ async function onStop() {
     chrome.runtime.sendMessage({ type: "rec-result", peak, duration });
   } catch (e) {
     console.error("[TabAudioRecorder] MP3 変換エラー:", e);
+    chrome.runtime.sendMessage({ type: "rec-error", error: String(e.message || e) });
   } finally {
     if (captureStream) {
       captureStream.getTracks().forEach((t) => t.stop());
@@ -103,6 +117,7 @@ async function onStop() {
     }
     recorder = null;
     chunks = [];
+    chrome.storage.local.set({ recording: false });
   }
 }
 
