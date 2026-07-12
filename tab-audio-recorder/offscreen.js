@@ -1,131 +1,99 @@
-// Offscreen ドキュメント: タブをキャプチャして音声を録音し、停止後に MP3 化する。
+// Offscreen: タブ音声をキャプチャして録音し、停止時に MP3 化して保存する（最小構成）。
 //
-// 要件「ミュートでも音を抜く」を満たす設計:
-//   source(タブ音声)
-//     ├─ recDest(MediaStreamDestination) ← 常にフル音量。ここを MediaRecorder で録る
-//     └─ gain(聞く=1 / ミュート=0) → destination(スピーカー)
-//   → ミュート時は gain=0 でユーザーには無音だが、recDest はフル音量なので録音には音が入る。
-//
-// 無音を踏まないための2つの鉄則:
-//   (1) audio だけ(video:false)で取ると Chrome は無音トラックを返す → audio+video で取得する。
-//   (2) MediaRecorder は「生トラック」ではなく Web Audio の出力(recDest.stream)を録る。
-//
-// 途中で止まっても必ずファイルを残す工夫:
-//   - recorder.start(1000): 1秒ごとにチャンク確保
-//   - キャプチャのトラックが ended になったら自動で停止＆保存
-//   - 録音状態は chrome.storage.local に保存（Service Worker が死んでも UI が正しく復元）
+// 要点（実績のある組み合わせ）:
+//   - audio+video で取得（audio 単独だと Chrome が無音トラックを返すため）
+//   - Web Audio の出力(recDest)を録音（生トラックを録ると Web Audio と競合して無音になる）
+//   - タブの音はスピーカーへ返して聞こえるようにする（＝レンダリング維持で確実に音が入る）
 
 let recorder = null;
 let chunks = [];
 let captureStream = null;
 let audioContext = null;
-let bitrate = 320;
-let autoStopTimer = null;
+let recording = false;
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target !== "offscreen") return;
-  if (msg.type === "start-recording") {
-    startRecording(msg.streamId, msg.monitor, msg.bitrate, msg.minutes).catch((e) => {
-      console.error("[TabAudioRecorder] 録音開始エラー:", e);
-      const text = "[offscreen.getUserMedia] " + String(e.message || e);
-      chrome.storage.local.set({
-        recording: false,
-        lastStatus: { type: "error", text },
-      });
-      chrome.runtime.sendMessage({ type: "rec-error", error: text });
-    });
-  } else if (msg.type === "stop-recording") {
-    stopRecording();
+  if (msg.type === "get-status") {
+    sendResponse({ recording });
+    return;
+  }
+  if (msg.type === "start") {
+    start(msg.streamId);
+  } else if (msg.type === "stop") {
+    stop();
   }
 });
 
-async function startRecording(streamId, monitor, kbps, minutes) {
-  if (recorder && recorder.state === "recording") return;
-  bitrate = kbps || 320;
+async function start(streamId) {
+  if (recording) return;
+  try {
+    captureStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId },
+      },
+      video: {
+        mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId },
+      },
+    });
 
-  captureStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId },
-    },
-    video: {
-      mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId },
-    },
-  });
+    const audioStream = new MediaStream(captureStream.getAudioTracks());
+    audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(audioStream);
+    const recDest = audioContext.createMediaStreamDestination();
+    source.connect(recDest); // 録音用（フル音量）
+    source.connect(audioContext.destination); // スピーカーへ（聞こえる＆レンダリング維持）
 
-  const audioStream = new MediaStream(captureStream.getAudioTracks());
-
-  audioContext = new AudioContext();
-  await audioContext.resume();
-  const source = audioContext.createMediaStreamSource(audioStream);
-  const recDest = audioContext.createMediaStreamDestination();
-  source.connect(recDest);
-  const gain = audioContext.createGain();
-  gain.gain.value = monitor ? 1 : 0;
-  source.connect(gain);
-  gain.connect(audioContext.destination);
-
-  chunks = [];
-  const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-    ? "audio/webm;codecs=opus"
-    : "audio/webm";
-  recorder = new MediaRecorder(recDest.stream, { mimeType });
-  recorder.ondataavailable = (e) => {
-    if (e.data && e.data.size > 0) chunks.push(e.data);
-  };
-  recorder.onstop = onStop;
-
-  // タブのキャプチャが途切れたら（タブを閉じた等）自動で停止＆保存
-  captureStream.getTracks().forEach((t) => {
-    t.onended = () => {
-      console.log("[TabAudioRecorder] トラック終了を検知 → 自動保存");
-      stopRecording();
+    chunks = [];
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "audio/webm";
+    recorder = new MediaRecorder(recDest.stream, { mimeType });
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
     };
-  });
+    recorder.onstop = onStop;
 
-  recorder.start(1000); // 1秒ごとにデータを確保
-  chrome.storage.local.set({ recording: true });
+    // タブを閉じる等でキャプチャが切れたら自動で停止＆保存
+    captureStream.getTracks().forEach((t) => {
+      t.onended = () => stop();
+    });
 
-  // N分後に自動停止（停止すれば onStop で必ず保存される）
-  if (minutes && minutes > 0) {
-    autoStopTimer = setTimeout(() => {
-      console.log(`[TabAudioRecorder] ${minutes}分経過 → 自動停止して保存`);
-      stopRecording();
-    }, minutes * 60 * 1000);
+    recorder.start(1000);
+    recording = true;
+  } catch (e) {
+    console.error("[TabAudioRecorder] 開始エラー:", e);
+    recording = false;
+    chrome.runtime.sendMessage({
+      type: "rec-error",
+      error: "[getUserMedia] " + String(e.message || e),
+    });
   }
 }
 
-function stopRecording() {
-  if (autoStopTimer) {
-    clearTimeout(autoStopTimer);
-    autoStopTimer = null;
-  }
+function stop() {
   if (recorder && recorder.state !== "inactive") recorder.stop();
 }
 
 async function onStop() {
+  recording = false;
   try {
     const webmBlob = new Blob(chunks, { type: "audio/webm" });
-    if (webmBlob.size === 0) {
-      console.error("[TabAudioRecorder] 録音データが空です");
-      chrome.runtime.sendMessage({ type: "rec-error", error: "録音データが空でした" });
-      return;
-    }
-    const { blob, peak, duration } = await webmToMp3(webmBlob, bitrate);
+    if (webmBlob.size === 0) throw new Error("録音データが空でした");
+    const blob = await webmToMp3(webmBlob, 320);
     const url = URL.createObjectURL(blob);
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     chrome.runtime.sendMessage({
-      target: "background",
       type: "download",
       url,
       filename: `tab-audio-${stamp}.mp3`,
     });
-    chrome.runtime.sendMessage({ type: "rec-result", peak, duration });
-    chrome.storage.local.set({ lastStatus: { type: "ok", peak, duration } });
+    chrome.runtime.sendMessage({ type: "saved" });
   } catch (e) {
-    console.error("[TabAudioRecorder] MP3 変換エラー:", e);
-    const text = "[MP3変換] " + String(e.message || e);
-    chrome.runtime.sendMessage({ type: "rec-error", error: text });
-    chrome.storage.local.set({ lastStatus: { type: "error", text } });
+    console.error("[TabAudioRecorder] 保存エラー:", e);
+    chrome.runtime.sendMessage({
+      type: "rec-error",
+      error: String(e.message || e),
+    });
   } finally {
     if (captureStream) {
       captureStream.getTracks().forEach((t) => t.stop());
@@ -137,7 +105,6 @@ async function onStop() {
     }
     recorder = null;
     chunks = [];
-    chrome.storage.local.set({ recording: false });
   }
 }
 
@@ -149,17 +116,8 @@ async function webmToMp3(webmBlob, kbps) {
 
   const channels = Math.min(audioBuffer.numberOfChannels, 2);
   const sampleRate = audioBuffer.sampleRate;
-  const leftF = audioBuffer.getChannelData(0);
-
-  let peak = 0;
-  for (let i = 0; i < leftF.length; i++) {
-    const a = Math.abs(leftF[i]);
-    if (a > peak) peak = a;
-  }
-
-  const left = floatTo16(leftF);
-  const right =
-    channels === 2 ? floatTo16(audioBuffer.getChannelData(1)) : null;
+  const left = floatTo16(audioBuffer.getChannelData(0));
+  const right = channels === 2 ? floatTo16(audioBuffer.getChannelData(1)) : null;
 
   const encoder = new lamejs.Mp3Encoder(channels, sampleRate, kbps);
   const blockSize = 1152;
@@ -168,8 +126,7 @@ async function webmToMp3(webmBlob, kbps) {
     const lChunk = left.subarray(i, i + blockSize);
     let mp3buf;
     if (channels === 2) {
-      const rChunk = right.subarray(i, i + blockSize);
-      mp3buf = encoder.encodeBuffer(lChunk, rChunk);
+      mp3buf = encoder.encodeBuffer(lChunk, right.subarray(i, i + blockSize));
     } else {
       mp3buf = encoder.encodeBuffer(lChunk);
     }
@@ -177,12 +134,7 @@ async function webmToMp3(webmBlob, kbps) {
   }
   const end = encoder.flush();
   if (end.length > 0) data.push(new Uint8Array(end));
-
-  return {
-    blob: new Blob(data, { type: "audio/mpeg" }),
-    peak,
-    duration: audioBuffer.duration,
-  };
+  return new Blob(data, { type: "audio/mpeg" });
 }
 
 function floatTo16(input) {

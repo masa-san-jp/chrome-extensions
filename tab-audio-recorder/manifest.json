@@ -1,15 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Tab Audio Recorder",
-  "version": "1.0.0",
-  "description": "再生中のタブの動画・音声を録音して音声ファイルとして保存します。ミュート（無音）状態でも音声を抜き出せます。",
-  "permissions": ["tabCapture", "offscreen", "downloads", "activeTab", "storage"],
-  "action": {
-    "default_popup": "popup.html",
-    "default_title": "タブ音声レコーダー"
-  },
+  "version": "2.0.0",
+  "description": "拡張アイコンをクリックすると再生中タブの音声を録音し、もう一度クリックで停止してMP3保存します。",
+  "permissions": ["tabCapture", "offscreen", "downloads"],
   "background": {
     "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "クリックで録音開始 / もう一度で停止・保存"
   },
   "minimum_chrome_version": "116"
 }
