@@ -1,6 +1,21 @@
 // Service Worker: アイコンクリックで録音の開始/停止をトグルする（Google公式の最小構成）。
 // 状態の真実は「offscreen が録音中か」を offscreen に問い合わせて得る（storage 不要）。
 
+// アイコン右クリックに「設定を開く」を追加（クリック録音を奪わずに設定へ到達できるように）
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: "open-options",
+      title: "設定を開く",
+      contexts: ["action"],
+    });
+  });
+});
+
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId === "open-options") chrome.runtime.openOptionsPage();
+});
+
 async function hasOffscreen() {
   const contexts = await chrome.runtime.getContexts({
     contextTypes: ["OFFSCREEN_DOCUMENT"],

@@ -3,7 +3,7 @@
   "name": "Tab Audio Recorder",
   "version": "2.1.0",
   "description": "拡張アイコンをクリックすると再生中タブの音声を録音し、もう一度クリックで停止して保存します。ミュート録音・自動停止・形式選択に対応。",
-  "permissions": ["tabCapture", "offscreen", "downloads", "storage"],
+  "permissions": ["tabCapture", "offscreen", "downloads", "storage", "contextMenus"],
   "background": {
     "service_worker": "background.js"
   },
