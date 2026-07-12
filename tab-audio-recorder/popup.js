@@ -11,10 +11,14 @@ function setUI(recording) {
   else if (!statusEl.textContent) statusEl.textContent = "待機中";
 }
 
-// 録音状態の真実は chrome.storage.local.recording
+// 実体(offscreen)と突き合わせた本当の状態を取得。残った recording=true はここでリセットされる。
 async function refresh() {
-  const { recording } = await chrome.storage.local.get("recording");
-  setUI(!!recording);
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "popup-sync" });
+    setUI(!!(res && res.recording));
+  } catch (e) {
+    setUI(false);
+  }
 }
 
 // 録音状態が変わったら（自動保存や別ウィンドウ操作でも）UIを追従

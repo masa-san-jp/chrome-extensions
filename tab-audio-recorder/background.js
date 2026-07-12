@@ -62,10 +62,24 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+// 実体（offscreen）と保存状態を突き合わせて本当の録音状態を返す。
+// offscreen が無ければ録音していないので、残っていた recording=true をリセットする。
+async function syncState() {
+  const offscreen = await hasOffscreen();
+  const { recording } = await chrome.storage.local.get("recording");
+  const real = offscreen && !!recording;
+  if (!!recording !== real) {
+    await chrome.storage.local.set({ recording: real });
+  }
+  return real;
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
-      if (msg.type === "popup-cleanup") {
+      if (msg.type === "popup-sync") {
+        sendResponse({ ok: true, recording: await syncState() });
+      } else if (msg.type === "popup-cleanup") {
         // 開始前に既存のキャプチャ/offscreen を解放（"active stream" エラー対策）
         await closeOffscreen();
         sendResponse({ ok: true });
