@@ -18,6 +18,15 @@ async function ensureOffscreen() {
   });
 }
 
+// offscreen ドキュメントを閉じて、掴んだままのタブキャプチャストリームを解放する
+async function closeOffscreen() {
+  if (await hasOffscreen()) {
+    await chrome.offscreen.closeDocument();
+  }
+  recording = false;
+  updateBadge();
+}
+
 async function startRecording(streamId, monitor, bitrate) {
   if (!streamId) throw new Error("ストリーム ID がありません");
   await ensureOffscreen();
@@ -50,7 +59,11 @@ function updateBadge() {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
-      if (msg.type === "popup-start") {
+      if (msg.type === "popup-cleanup") {
+        // 開始前に既存のキャプチャ/offscreen を解放（"active stream" エラー対策）
+        await closeOffscreen();
+        sendResponse({ ok: true });
+      } else if (msg.type === "popup-start") {
         await startRecording(msg.streamId, !!msg.monitor, msg.bitrate || 320);
         sendResponse({ ok: true });
       } else if (msg.type === "popup-stop") {

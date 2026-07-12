@@ -29,6 +29,9 @@ startBtn.addEventListener("click", async () => {
       throw new Error("このページ（chrome:// など）はキャプチャできません");
     }
 
+    // 前回のキャプチャが残っていると "active stream" エラーになるので、先に解放する
+    await chrome.runtime.sendMessage({ type: "popup-cleanup" });
+
     // クリック直後（ユーザー操作コンテキスト）で取得することでキャプチャを確実に有効化する
     const streamId = await chrome.tabCapture.getMediaStreamId({
       targetTabId: tab.id,
