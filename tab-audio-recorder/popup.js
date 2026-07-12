@@ -5,7 +5,8 @@ const minutesEl = document.getElementById("minutes");
 const statusEl = document.getElementById("status");
 
 function setUI(recording) {
-  startBtn.disabled = recording;
+  // 開始ボタンは常に押せるようにする（詰まり防止：押せば内部で前回分を解放して録り直す）
+  startBtn.disabled = false;
   stopBtn.disabled = !recording;
   monitorEl.disabled = recording;
   minutesEl.disabled = recording;
@@ -13,10 +14,27 @@ function setUI(recording) {
   else if (!statusEl.textContent) statusEl.textContent = "待機中";
 }
 
+function showLast(s) {
+  if (!s) return;
+  if (s.type === "error") {
+    statusEl.innerHTML = '<span class="err">前回: ' + s.text + "</span>";
+  } else if (s.type === "ok") {
+    const silent = s.peak < 0.001;
+    statusEl.innerHTML =
+      `前回保存: 長さ ${s.duration.toFixed(1)}s / ピーク ${s.peak.toFixed(4)}` +
+      (silent ? '<br><span class="err">⚠ 無音でした</span>' : "");
+  }
+}
+
 async function refresh() {
   try {
     const res = await chrome.runtime.sendMessage({ type: "popup-sync" });
-    setUI(!!(res && res.recording));
+    const recording = !!(res && res.recording);
+    setUI(recording);
+    if (!recording) {
+      const { lastStatus } = await chrome.storage.local.get("lastStatus");
+      showLast(lastStatus);
+    }
   } catch (e) {
     setUI(false);
   }

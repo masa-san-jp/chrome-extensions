@@ -27,8 +27,12 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "start-recording") {
     startRecording(msg.streamId, msg.monitor, msg.bitrate, msg.minutes).catch((e) => {
       console.error("[TabAudioRecorder] 録音開始エラー:", e);
-      chrome.storage.local.set({ recording: false });
-      chrome.runtime.sendMessage({ type: "rec-error", error: String(e.message || e) });
+      const text = "[offscreen.getUserMedia] " + String(e.message || e);
+      chrome.storage.local.set({
+        recording: false,
+        lastStatus: { type: "error", text },
+      });
+      chrome.runtime.sendMessage({ type: "rec-error", error: text });
     });
   } else if (msg.type === "stop-recording") {
     stopRecording();
@@ -116,9 +120,12 @@ async function onStop() {
       filename: `tab-audio-${stamp}.mp3`,
     });
     chrome.runtime.sendMessage({ type: "rec-result", peak, duration });
+    chrome.storage.local.set({ lastStatus: { type: "ok", peak, duration } });
   } catch (e) {
     console.error("[TabAudioRecorder] MP3 変換エラー:", e);
-    chrome.runtime.sendMessage({ type: "rec-error", error: String(e.message || e) });
+    const text = "[MP3変換] " + String(e.message || e);
+    chrome.runtime.sendMessage({ type: "rec-error", error: text });
+    chrome.storage.local.set({ lastStatus: { type: "error", text } });
   } finally {
     if (captureStream) {
       captureStream.getTracks().forEach((t) => t.stop());

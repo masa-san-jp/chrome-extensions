@@ -25,28 +25,39 @@ async function closeOffscreen() {
 }
 
 async function startRecording(monitor, minutes) {
-  // 前回のキャプチャが残っていると "active stream" になるので、先に解放
-  await closeOffscreen();
+  let step = "init";
+  try {
+    // 前回のキャプチャが残っていると "active stream" になるので、先に解放
+    step = "closeOffscreen";
+    await closeOffscreen();
 
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) throw new Error("アクティブなタブが見つかりません");
-  if (tab.url && /^(chrome|edge|about|chrome-extension):/.test(tab.url)) {
-    throw new Error("このページ（chrome:// など）はキャプチャできません");
+    step = "queryTab";
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) throw new Error("アクティブなタブが見つかりません");
+    if (tab.url && /^(chrome|edge|about|chrome-extension):/.test(tab.url)) {
+      throw new Error("このページ（chrome:// など）はキャプチャできません");
+    }
+
+    step = "getMediaStreamId";
+    const streamId = await chrome.tabCapture.getMediaStreamId({
+      targetTabId: tab.id,
+    });
+
+    step = "ensureOffscreen";
+    await ensureOffscreen();
+
+    step = "sendStart";
+    await chrome.runtime.sendMessage({
+      target: "offscreen",
+      type: "start-recording",
+      streamId,
+      monitor,
+      minutes,
+      bitrate: 320,
+    });
+  } catch (e) {
+    throw new Error(`[${step}] ${e.message || e}`);
   }
-
-  const streamId = await chrome.tabCapture.getMediaStreamId({
-    targetTabId: tab.id,
-  });
-
-  await ensureOffscreen();
-  await chrome.runtime.sendMessage({
-    target: "offscreen",
-    type: "start-recording",
-    streamId,
-    monitor,
-    minutes,
-    bitrate: 320,
-  });
 }
 
 async function stopRecording() {
@@ -84,8 +95,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.type === "popup-sync") {
         sendResponse({ ok: true, recording: await syncState() });
       } else if (msg.type === "popup-start") {
-        await startRecording(!!msg.monitor, msg.minutes || 0);
-        sendResponse({ ok: true });
+        try {
+          await startRecording(!!msg.monitor, msg.minutes || 0);
+          await chrome.storage.local.remove("lastStatus");
+          sendResponse({ ok: true });
+        } catch (e) {
+          await chrome.storage.local.set({
+            lastStatus: { type: "error", text: e.message },
+          });
+          sendResponse({ ok: false, error: e.message });
+        }
       } else if (msg.type === "popup-stop") {
         await stopRecording();
         sendResponse({ ok: true });
